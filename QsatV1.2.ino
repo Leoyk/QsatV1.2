@@ -557,10 +557,13 @@ while(1){
   
   //蓝牙输出
    #ifdef blueDebug
+    BLEser.print("distance:");
     BLEser.print(distance);
     BLEser.print("m\t");
+    BLEser.print("\tBmpAltitude:");
     BLEser.print(BmpAltitude);
     BLEser.print("m\t");
+    BLEser.print("\tgpsHight:");
     BLEser.print(gpsHight);
     BLEser.println("m");
    #endif   
