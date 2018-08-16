@@ -22,6 +22,7 @@
     执行器：
         Servo：
           ser     2
+          ser1     3
         beep：
           bee     46    
           
@@ -32,7 +33,7 @@
   九天未来
   2018.07.11
   
-*/
+*/ 
 
 
 
@@ -41,11 +42,16 @@
 
 #define SETGPS 1500   //GPS释放高度   单位m 1500（海拉尔气象站基准海拔700）
 #define SETPRE 1500   //气压计释放高度 单位m
-#define SETDIS 30000  //GPS距离     单位m
+#define SETDIS 30000  //GPS距离     单位m 
+#define setHour 1  //释放时间 UTC 1点
+#define setMinu 10  //释放时间 UTC 10分
 
 #define NSETGPSBASE   //屏蔽之后将跳过初始化中的定位操作，直接使用写入的参数作为基准经纬度。
 float baseLat = 4915.00,baseLon = 11942.10;//海拉尔气象站经纬度    格式：dddmm.mmmmm
-long baseTime = 0,baseAltitude = 0,gpsHight = 0;
+int baseTime[2],//min huor
+
+baseAltitude = 0,gpsHight = 0;
+int localBaseTime[6],localTime[6];//y,m,d,h,f,s
 
 #define blueDebug   //屏蔽以关闭蓝牙调试串口
 
@@ -101,10 +107,15 @@ void setup() {
    BLEser.begin(9600);
   #endif
 
-  
+//-------------------------初始化实时时钟------------------------------
+  RTCinit();
 //----------------------------初始化舵机-------------------------------
   ser.attach(2);
-  ser.write(50);//close
+  ser.write(50);//close  
+  ser1.attach(3);
+  ser1.write(50);//close
+
+  
   UHFser.println("Servo is locked!");
 
   
@@ -188,9 +199,17 @@ delay(120);
 location(&gpsData);
 baseLat = gpsData.latitude;
 baseLon = gpsData.longitude;
-baseTime = gpsData.minu; 
+baseTime[0] = gpsData.minu; 
+baseTime[1] = gpsData.hour; 
 baseAltitude = gpsData.altitude; 
 #endif
+
+//校准RTC时间
+adjTime(gpsData.year,gpsData.month,gpsData.day,gpsData.hour,gpsData.minu,gpsData.sece);
+//获取RTC时间
+getTime(&localBaseTime[0],&localBaseTime[1],&localBaseTime[2],&localBaseTime[3],&localBaseTime[4],&localBaseTime[5]);
+for(int Ti = 0;Ti  < 6;Ti ++)
+  Serial3.print(localBaseTime[Ti]);
 //获取后蜂鸣三声
 tone(bee,1000,100); 
 delay(120);
@@ -279,7 +298,7 @@ static int thread2_entry(struct pt *pt){
     PT_TIMER_DELAY(pt,100);
     pressure = pressureVal();
   //计算气压高度
-    BmpAltitude = altitudeVal(pressure,basePressure);
+    BmpAltitude = altitudeVal(pressure,101325);
   //存储数据
     data[2] = basePressure;
     data[3] = pressure;
@@ -440,7 +459,11 @@ static int thread5_entry(struct pt *pt){
   PT_BEGIN(pt);
   while(1){ 
     //获取数据 + 滤波 分压电阻10K + 2K
-      batteryVoltage = smoothFliterGZ(analogRead(A11)*0.0295); 
+    
+     batteryVoltage = smoothFliterGZ(map(analogRead(A11) * 0.00488,0.4,2,0,10000)); 
+
+     
+     //batteryVoltage = smoothFliterGZ(analogRead(A11)*0.0295); 
     //存储数据
       data[32] = batteryVoltage;
 
@@ -478,10 +501,92 @@ if(takeFlag == 0){
         }
       }
 
+//3.判断系统时间是否到限制
+
+
+//GPS时间释放
+
+if(gpsData.hour > 23 ||gpsData.minu > 59);
+else{
+  if((gpsData.hour == setHour) && (gpsData.minu >= setMinu)){//over set time
+    takeOffInfo = 3;//释放
+   }
+  }
+
+/*
+if(gpsData.hour > 23 ||gpsData.minu > 59);
+else{
+//情况1：一小时后换天
+if(baseTime[1] == 23){
+  if((gpsData.hour == 0) && (gpsData.minu >= baseTime[0])){//当前是0点，且分钟超过了基准
+    takeOffInfo = 3;//释放
+   }
+   else if(gpsData.hour > 0){
+    takeOffInfo = 3;//释放
+    }
 }
-    if(takeOffInfo > 0 && takeFlag == 0){   
+//情况2：一小时后不换天
+else if((gpsData.hour == baseTime[1] + 1) && (gpsData.minu >= baseTime[0])){//在下个小时内，且分钟超过了基准
+    takeOffInfo = 3;//释放
+  }
+else if(gpsData.hour > baseTime[1] + 1){
+    takeOffInfo = 3;//释放
+  }
+}
+*/
+//RTC时间释放
+
+//获取RTC时间
+getTime(&localTime[0],&localTime[1],&localTime[2],&localTime[3],&localTime[4],&localTime[5]);
+
+if(localTime[3] > 23 || localTime[4] > 60 || localTime[5] > 60);
+else if((localTime[3] == setHour)&&(localTime[4] >= setMinu)){
+    takeOffInfo = 4;//释放
+}
+
+
+/*
+if(localTime[3] > 23 || localTime[4] > 60 || localTime[5] > 60);
+else{
+//情况1：一小时后换天
+if(localBaseTime[3] == 23){
+  if((localTime[3] == 0) && (localTime[4] >= localBaseTime[4])){//当前是0点，且分钟超过了基准
+    takeOffInfo = 4;//释放
+   }
+   else if(localTime[3] > 0){
+    takeOffInfo = 4;//释放
+    }
+}
+//情况2：一小时后不换天
+else if((localTime[3] == localBaseTime[3] + 1) && (localTime[4] >= localBaseTime[4])){//在下个小时内，且分钟超过了基准
+    takeOffInfo = 4;//释放
+  }
+else if(localTime[3] > localBaseTime[3] + 1){
+    takeOffInfo = 4;//释放
+  }
+ }*/
+
+ 
+}
+
+data[34] = localTime[3];
+data[35] = localTime[4];
+data[36] = localTime[5];
+
+if(takeOffInfo > 0){
+  takeOffFlagCount ++;
+  
+  if(takeOffFlagCount > 5)
+   takeFlag = takeOffInfo;
+      }
+      
+else{
+  takeOffFlagCount = 0;
+  }
+  
+if(takeFlag > 0){   
       takeFlag = takeOffInfo;
-      for(int sf = 0;sf < 3; sf ++){
+      for( sf = 0;sf < 3; sf ++){
         ser.write(110);//open
         
         if(takeOffInfo == 1)
@@ -494,10 +599,41 @@ if(takeFlag == 0){
           UHFser.print("\tdistance:");
           UHFser.println(distance);
         }
+        else if(takeOffInfo == 3){
+          UHFser.println("take off by GPS TimeOut: 1 hour");
+          }
+        else if(takeOffInfo == 4){
+          UHFser.println("take off by RTC TimeOut: 1 hour");
+          }
+        PT_TIMER_DELAY(pt,300);
+      }
+      
+        PT_TIMER_DELAY(pt,4100);
 
-        delay(300);
+      for(sf = 0;sf < 3; sf ++){
+        ser1.write(110);//open
+        
+        if(takeOffInfo == 1)
+          UHFser.println("take off by CMD: ShiFang.");
+        else if(takeOffInfo == 2){
+          UHFser.print("take off by gpsHight:");
+          UHFser.print(gpsHight);
+          UHFser.print("\tbmpHight:");
+          UHFser.print(BmpAltitude);
+          UHFser.print("\tdistance:");
+          UHFser.println(distance);
+        }      
+        else if(takeOffInfo == 3){
+          UHFser.println("take off by GPS TimeOut: 1 hour");
+          }
+        else if(takeOffInfo == 4){
+          UHFser.println("take off by RTC TimeOut: 1 hour");
+          }
+
+        PT_TIMER_DELAY(pt,300);
       }
-      }
+    }
+  
     data[33] = takeOffInfo;
     PT_TIMER_DELAY(pt,500);
   }
@@ -617,11 +753,7 @@ while(1){
    UHFout = "";   
 
    
-//groud speed
-   UHFout = "{\"N\":12,\"UVE\":"+(String)(gpsData.speed)+",\"CK\":\"FF\"}";
-   UHFser.println(UHFout);
-
-   UHFout = "";  
+ 
 
     
 //sat
@@ -647,6 +779,19 @@ while(1){
 
   UHFout = "";  
 
+
+//time
+
+
+   UHFout = "{\"N\":12,\"UVE\":"+(String)(60 * (gpsData.hour - baseTime[1] - 1)  + gpsData.minu  + 60 - baseTime[0])+",\"CK\":\"FF\"}";
+ 
+   UHFser.println(UHFout);
+
+   UHFout = ""; 
+
+
+  
+
     PT_TIMER_DELAY(pt,100);
   }
   PT_END(pt);
@@ -660,7 +805,9 @@ while(1){
      
 openFile();
 SwriteData("\r\ncode run:");
-iwriteData(gpsData.minu - baseTime);
+
+  iwriteData(60 * (gpsData.hour - baseTime[1] - 1)  + gpsData.minu  + 60 - baseTime[0]);
+  
 SwriteDataLn("min");
 SwriteData("\r\n\r\ncode speed:");
 iwriteData(millis() - timeMark - 100);
@@ -674,7 +821,7 @@ iwriteData(gpsData.minu);
 SwriteData(":");
 iwriteDataLn(gpsData.sece);
 
-for(cntNum = 0;cntNum < 34;cntNum ++){ 
+for(cntNum = 0;cntNum < 37;cntNum ++){ 
 
   iwriteData(cntNum);
   SwriteData(": ");
